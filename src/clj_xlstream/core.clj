@@ -8,29 +8,44 @@
    (org.apache.poi.openxml4j.opc OPCPackage)
    (org.apache.poi.poifs.filesystem POIFSFileSystem)
    (org.apache.poi.hssf.eventusermodel HSSFEventFactory
+                                       HSSFListener
                                        HSSFRequest)
+   (org.apache.poi.hssf.record Record)
    (org.apache.poi.xssf.eventusermodel ReadOnlySharedStringsTable
                                        XSSFReader
                                        XSSFSheetXMLHandler
                                        XSSFSheetXMLHandler$SheetContentsHandler)))
 
-(defn file-type
+(defn- file-type
   [istream opt]
   (when (.markSupported istream)
     (cond 
      (POIFSFileSystem/hasPOIFSHeader istream) :hssf
      (POIXMLDocument/hasOOXMLHeader istream)  :xssf)))
 
+
+(defn- make-hssf-listener
+  [handler]
+  (reify 
+    HSSFListener
+    (processRecord
+      [_ record]
+      (println record))))
+
+
 (defmulti read-xls
   "Reads Excel file"
   file-type)
+
 
 ;; binary Excel files (.xls)
 (defmethod read-xls :hssf
   [istream handler]
   (let [events (new HSSFEventFactory)
         request (new HSSFRequest)]
-    (println "not implemented yet")))
+    (.addListenerForAllRecords request (make-hssf-listener handler))
+    (.processEvents events request istream)))
+
 
 ;; OOXML Excel files (.xlsx)
 (defmethod read-xls :xssf
@@ -39,26 +54,44 @@
         reader (new XSSFReader package)
         styles (.getStylesTable reader)
         strings (new ReadOnlySharedStringsTable package)
-        sheethandler (new XSSFSheetXMLHandler styles strings handler true)]
-    (doseq [sheet (iterator-seq (.getSheetsData reader))]
+        sheethandler (new XSSFSheetXMLHandler styles strings handler true)
+        sheets (.getSheetsData reader)]
+    (doseq [sheet (iterator-seq sheets)]
+      (.startSheet handler (.getSheetName sheets))
       (doto (XMLReaderFactory/createXMLReader)
         (.setContentHandler sheethandler)
-        (.parse (new InputSource sheet))))))
+        (.parse (new InputSource sheet)))
+      (.endSheet handler))))
 
-(def myhandler 
-  (proxy [XSSFSheetXMLHandler$SheetContentsHandler] []
+
+(defprotocol SheetListener
+  (startSheet [this name])
+  (endSheet [this]))
+
+
+(def myhandler
+  (reify
+    XSSFSheetXMLHandler$SheetContentsHandler
     (cell
-      [#^String cellReference #^String formattedValue]
+      [_ cellReference formattedValue]
       (println "#CellValue: " formattedValue))
     (endRow
-      []
+      [_]
       (println "#EndRow"))
     (headerFooter
-      [#^String text isHeader #^String tagName]
+      [_ text isHeader tagName]
       (println text tagName))
     (startRow
-      [rowNum]
-      (println "#RowNum: " rowNum))))
+      [_ rowNum]
+      (println "#RowNum: " rowNum))
+    SheetListener
+    (startSheet
+      [_ name]
+      (println "#Sheet: " name))
+    (endSheet
+      [_]
+      (println "#EndSheet"))))
+
 
 (defn -main
   [fname]
