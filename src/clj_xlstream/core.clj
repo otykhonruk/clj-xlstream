@@ -134,11 +134,11 @@
       (set! *rownum* rownum))
     (endRow
       [_]
-      (if (pos? *rownum*)
+      (when (pos? *rownum*)
         (do
           (jdbc/insert-record :prices *row* :transactions? false)
           ;; (println *row*)
-          (set! *row* (apply dissoc *row* (keys *row*))))))
+          (set! *row* {}))))
     (headerFooter [_ text isHeader tagName])
     SheetListener
     (startSheet [_ name])
