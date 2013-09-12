@@ -1,4 +1,6 @@
 (ns clj-xlstream.core
+  (:require 
+   [clojure.java.jdbc :as jdbc])
   (:use
    [clojure.java.io :only [input-stream]])
   (:import
@@ -74,7 +76,7 @@
     XSSFSheetXMLHandler$SheetContentsHandler
     (cell
       [_ cellReference formattedValue]
-      (println "#CellValue: " formattedValue))
+      (println "#Cell" cellReference ": " formattedValue))
     (endRow
       [_]
       (println "#EndRow"))
@@ -93,7 +95,82 @@
       (println "#EndSheet"))))
 
 
+;; maps xls columns to db columns
+(def col-mapping 
+  {"A" "count"
+   "B" "onpp" 
+   "C" "author"
+   "D" "title"
+   "E" "std"
+   "F" "price"
+   "G" "publisher"
+   "H" "translate"
+   "I" "year"
+   "J" "genre"
+   "K" "series"
+   "L" "format"
+   "M" "isbn"
+   "N" "pages"
+   "O" "article"
+   "P" "pricetax"
+   "Q" "ean"
+   "R" "category"
+   "S" "header"})
+
+(defn col-name [cellref]
+  (keyword (col-mapping (str (first cellref)))))
+
+
+(def ^:dynamic *row*)
+(def ^:dynamic *rownum*)
+
+(def db-loader
+  (reify
+    XSSFSheetXMLHandler$SheetContentsHandler
+    (cell
+      [_ cellref val]
+      (set! *row* (assoc *row* (col-name cellref) val)))
+    (startRow [_ rownum]
+      (set! *rownum* rownum))
+    (endRow
+      [_]
+      (if (pos? *rownum*)
+        (do
+          (jdbc/insert-record :prices *row* :transactions? false)
+          ;; (println *row*)
+          (set! *row* (apply dissoc *row* (keys *row*))))))
+    (headerFooter [_ text isHeader tagName])
+    SheetListener
+    (startSheet [_ name])
+    (endSheet  [_])))
+
+
+(defn load-from-file
+  [fname dbspec]
+  (with-open [istream (input-stream fname)]
+    (binding [*row* {}
+              *rownum* 0]
+      (jdbc/with-connection dbspec
+        (read-xls istream db-loader)))))
+
+;; test db
+;; 
+;; (def test-db 
+;;   {:subprotocol "sqlite"
+;;    :subname "rs.db"
+;;    :username ""
+;;    :password ""})
+
+;; test table
+;; 
+;; (defn create-prices
+;;   [dbspec]
+;;   (jdbc/with-connection dbspec
+;;     (apply 
+;;      jdbc/create-table
+;;      :prices
+;;      (for [c (vals col-mapping)] [(keyword c) "TEXT"]))))
+
 (defn -main
   [fname]
-  (with-open [istream (input-stream fname)]
-    (read-xls istream myhandler)))
+  (load-from-file fname test-db))
